@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>文件快传</title>
+  <script src="/static/js/vue.global.prod.js"></script>
+  <script src="/static/js/qrcode.min.js"></script>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<div id="app">
+  <h1>📁 文件快传</h1>
+  <div class="tab-container">
+    <div class="tab-buttons">
+      <button
+        :class="['tab-button', activeTab === 'file' ? 'active' : '']"
+        @click="activeTab = 'file'"
+      >📁 发送文件</button>
+      <button
+        :class="['tab-button', activeTab === 'text' ? 'active' : '']"
+        @click="activeTab = 'text'"
+      >📝 发送文本</button>
+    </div>
+
+    <!-- 文件标签页 -->
+    <div v-show="activeTab === 'file'" class="tab-content">
+      <!-- 拖拽上传区 -->
+      <div
+        class="upload-area"
+        ref="dropZone"
+        @dragenter.prevent="dragover = true"
+        @dragover.prevent="dragover = true"
+        @dragleave.prevent="dragover = false"
+        @drop.prevent="handleDrop"
+      >
+        <p>📁 将文件拖放到此处上传</p>
+        <p>或</p>
+        <input type="file" multiple ref="fileInput" style="display:none;" @change="handleFileInputChange">
+        <button class="upload-btn" @click="$refs.fileInput.click()">选择文件</button>
+
+        <div id="progressContainer" v-show="uploading">
+          <div>上传进度: {{ uploadProgress }}%</div>
+          <div id="progressBar"><div id="progressFill" :style="{width: uploadProgress + '%'}"></div></div>
+        </div>
+      </div>
+
+      <div v-if="files.length">
+        <h2>📥 已上传文件（共 {{ files.length }} 个）</h2>
+        <form @submit.prevent="batchDownload">
+          <ul>
+            <li v-for="f in files" :key="f.name">
+              <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+                <div style="display:flex; align-items:center; flex-grow:1;">
+                  <label style="display:flex; align-items:center; width:100%;">
+                    <input type="checkbox" v-model="selectedFiles" :value="f.name" class="file-checkbox">
+                    <span style="flex-grow:1;">{{ f.name }}</span>
+                  </label>
+                </div>
+                <span style="margin:0 15px; color:#666; white-space:nowrap;">{{ f.size }}</span>
+                <a :href="`/uploads/${encodeURIComponent(f.name)}`" target="_blank">下载</a>
+              </div>
+            </li>
+          </ul>
+
+          <div class="batch-download">
+            <label><input type="checkbox" v-model="selectAll"> 全选</label>
+            <button type="submit" class="upload-btn" style="margin-left:10px; background:#e67e22;">
+              📦 批量下载（ZIP）
+            </button>
+          </div>
+        </form>
+      </div>
+      <p v-else style="text-align:center; color:#777;">暂无文件</p>
+
+    </div>
+
+    <!-- 文本标签页 -->
+    <div v-show="activeTab === 'text'" class="tab-content">
+      <h2>📝 发送文本</h2>
+
+      <textarea v-model="newText" rows="4" placeholder="在这里输入要分享的文本..."></textarea>
+
+      <button class="upload-btn" style="margin-top:10px; background:#27ae60;" @click="sendText" :disabled="!newText.trim()">
+        发送文本
+      </button>
+
+      <div v-if="messages.length">
+        <h3 style="margin-top:30px;">已发送文本（共 {{ messages.length }} 条）</h3>
+        <ul style="list-style:none; padding:0; margin:0;">
+          <li v-for="(msg, i) in messages" :key="i" style="padding:15px; border-bottom:1px solid #eee; background:#f9f9f9; margin-bottom:8px; border-radius:6px; display:flex; flex-direction:column;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px;">
+              <div class="text-message-time">{{ msg.time }}</div>
+              <button class="copy-text-btn" @click="copyText(msg.content, $event)">复制</button>
+            </div>
+            <p class="text-message-content">{{ msg.content }}</p>
+          </li>
+        </ul>
+      </div>
+      <p v-else style="text-align:center; color:#999; margin-top:20px;">暂无文本消息</p>
+    </div>
+  </div>
+
+  <!-- 二维码区域 -->
+  <div class="qr-section">
+    <h2>📱 扫码访问（可切换地址）</h2>
+
+    <div class="ip-selector">
+      <label for="ipSelect">选择访问地址：</label>
+      <select id="ipSelect" v-model="selectedIP" @change="updateQRCode">
+        <option v-for="ip in ipv4List" :key="ip" :value="ip">
+          {{ ip }} (IPv4)
+          <template v-if="ipv4List[0] === ip && !ipv6List.length"> ← 推荐</template>
+        </option>
+        <option v-for="ip in ipv6List" :key="ip" :value="ip">
+          {{ ip }} (IPv6)
+          <template v-if="!ipv4List.length && ipv6List[0] === ip"> ← 推荐</template>
+        </option>
+        <option v-if="!ipv4List.length && !ipv6List.length" value="127.0.0.1">127.0.0.1 (本地)</option>
+      </select>
+      <button class="copy-btn" @click="copyUrl">📋 复制链接</button>
+    </div>
+
+    <div id="qrcode"></div>
+    <p id="currentUrl">{{ currentUrlDisplay }}</p>
+  </div>
+
+</div>
+
+<script src="/static/js/app.js"></script>
+
+</body>
+</html>
