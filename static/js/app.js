@@ -117,9 +117,10 @@ createApp({
         const textArea = document.createElement('textarea');
         textArea.value = text;
         textArea.style.position = 'fixed';
-        textArea.style.top = '0';
-        textArea.style.left = '0';
+        textArea.style.top = '-3999px';
+        textArea.style.left = '-3999px';
         textArea.style.opacity = '0';
+        textArea.style.pointerEvents = 'none';
         document.body.appendChild(textArea);
         textArea.focus();
         textArea.select();
@@ -133,7 +134,7 @@ createApp({
           }
         } catch (fallbackErr) {
           console.error('Fallback 复制失败:', fallbackErr);
-          alert('自动复制失败，请长按或右键复制以下文本：\n\n' + text);
+          alert('自动复制失败，请手动复制：\n\n' + text);
         } finally {
           document.body.removeChild(textArea);
         }
