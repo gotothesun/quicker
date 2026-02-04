@@ -3,6 +3,7 @@ import socket
 import zipfile
 import io
 import threading
+import json
 import ipaddress
 from pathlib import Path
 from datetime import datetime
@@ -19,6 +20,7 @@ app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB
 PORT = 5000
 
 messages = []  # 全局存储文本消息（内存中，程序重启会丢失）
+messages_lock = threading.Lock()
 
 def format_size(size_bytes):
     if size_bytes >= 1024 * 1024 * 1024:
@@ -29,6 +31,16 @@ def format_size(size_bytes):
         return f"{size_bytes / 1024:.2f} KB"
     else:
         return f"{size_bytes} B"
+
+def safe_path_check(upload_dir, requested_filename):
+    """确保请求的文件在目标目录内"""
+    requested_path = os.path.join(upload_dir, requested_filename)
+    requested_path = os.path.abspath(requested_path)
+    upload_dir = os.path.abspath(upload_dir)
+
+    if not requested_path.startswith(upload_dir):
+        return False
+    return os.path.isfile(requested_path)
 
 # 获取本机 IP（IPv4 + IPv6）
 def get_all_ips():
@@ -57,9 +69,9 @@ def get_all_ips():
                         ipv6_list.append(ip)
                     elif ip_obj.is_private or ip.startswith('fd'):
                         ipv6_list.append(ip)
-            except:
+            except Exception:
                 continue
-    except:
+    except Exception:
         pass
 
     try:
@@ -68,7 +80,7 @@ def get_all_ips():
             fallback_v4 = s.getsockname()[0]
             if fallback_v4 not in seen and ipaddress.ip_address(fallback_v4).is_private:
                 ipv4_list.append(fallback_v4)
-    except:
+    except Exception:
         pass
 
     def sort_v4(ip):
@@ -93,7 +105,9 @@ def index():
         files = request.files.getlist('files')
         for file in files:
             if file and file.filename:
-                filename = file.filename
+                filename = os.path.basename(file.filename)
+                if '..' in filename or filename.startswith('/') or filename.startswith('\\'):
+                    continue
                 filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
                 counter = 1
                 while os.path.exists(filepath):
@@ -144,22 +158,22 @@ def api_text():
         data = request.get_json()
         content = (data or {}).get('content', '').strip()
         if content:
-            messages.append({
-                'content': content,
-                'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            })
+            with messages_lock:
+                messages.append({
+                    'content': content,
+                    'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                })
         return '', 204
-    except:
-        return jsonify({"error": "Invalid JSON"}), 400
+    except Exception:
+        return '', 204
 
 
 @app.route('/uploads/<path:filename>')
 def download_file(filename):
     upload_dir = Path(app.config['UPLOAD_FOLDER']).resolve()
-    requested_path = (upload_dir / filename).resolve()
-    if not requested_path.is_file() or not requested_path.parent.samefile(upload_dir):
+    if not safe_path_check(upload_dir, filename):
         return "文件不存在或无权限", 403
-    return send_file(requested_path, as_attachment=True)
+    return send_file(str(upload_dir / filename), as_attachment=True)
 
 
 @app.route('/download_selected', methods=['POST'])
@@ -172,10 +186,9 @@ def download_selected():
     memory_file = io.BytesIO()
     with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
         for filename in selected:
-            safe_path = (upload_dir / filename).resolve()
-            if not safe_path.is_file() or not safe_path.parent.samefile(upload_dir):
+            if not safe_path_check(upload_dir, filename):
                 continue
-            zf.write(str(safe_path), arcname=filename)
+            zf.write(str(upload_dir / filename), arcname=filename)
     memory_file.seek(0)
     return send_file(
         memory_file,
@@ -193,7 +206,7 @@ def run_dual_stack_server():
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
-    except:
+    except Exception:
         sock.close()
         return False
     try:
@@ -201,7 +214,7 @@ def run_dual_stack_server():
         sock.listen(5)
         server = make_server('::', PORT, app, threaded=True, socket=sock)
         server.serve_forever()
-    except:
+    except Exception:
         sock.close()
         return False
     return True
