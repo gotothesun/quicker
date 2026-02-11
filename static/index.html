@@ -6,12 +6,16 @@
   <title>文件快传</title>
   <script src="/static/js/vue.global.prod.js"></script>
   <script src="/static/js/qrcode.min.js"></script>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
 
 <div id="app">
-  <h1>📁 文件快传</h1>
+  <div class="header-bar">
+    <h1>📁 文件快传</h1>
+    <button class="theme-toggle" @click="toggleTheme">{{ isDark ? '☀️ 亮色' : '🌙 暗色' }}</button>
+  </div>
   <div class="tab-container">
     <div class="tab-buttons">
       <button
@@ -24,54 +28,67 @@
       >📝 发送文本</button>
     </div>
 
+    <div v-if="!isAuthenticated" class="login-overlay">
+      <div class="login-modal">
+        <h2>🔐 请输入密码</h2>
+        <input type="password" v-model="loginPassword" @keyup.enter="login" placeholder="请输入访问密码">
+        <button class="upload-btn" @click="login">登录</button>
+        <p v-if="loginError" class="error-msg">{{ loginError }}</p>
+      </div>
+    </div>
+
+    <template v-if="isAuthenticated">
     <!-- 文件标签页 -->
     <div v-show="activeTab === 'file'" class="tab-content">
       <!-- 拖拽上传区 -->
-      <div
-        class="upload-area"
-        ref="dropZone"
-        @dragenter.prevent="dragover = true"
-        @dragover.prevent="dragover = true"
-        @dragleave.prevent="dragover = false"
-        @drop.prevent="handleDrop"
-      >
-        <p>📁 将文件拖放到此处上传</p>
-        <p>或</p>
-        <input type="file" multiple ref="fileInput" style="display:none;" @change="handleFileInputChange">
-        <button class="upload-btn" @click="$refs.fileInput.click()">选择文件</button>
+        <div
+          class="upload-area"
+          ref="dropZone"
+          @dragenter.prevent="dragover = true"
+          @dragover.prevent="dragover = true"
+          @dragleave.prevent="dragover = false"
+          @drop.prevent="handleDrop"
+          :class="{ dragover: dragover }"
+        >
+          <p>📁 将文件拖放到此处上传</p>
+          <p>或</p>
+          <input type="file" multiple ref="fileInput" style="display:none;" @change="handleFileInputChange">
+          <button class="upload-btn" @click="$refs.fileInput.click()">选择文件</button>
 
-        <div id="progressContainer" v-show="uploading">
-          <div>上传进度: {{ uploadProgress }}%</div>
-          <div id="progressBar"><div id="progressFill" :style="{width: uploadProgress + '%'}"></div></div>
+          <div id="progressContainer" v-show="uploading || chunkProgress > 0">
+            <div>上传进度: {{ uploadProgress }}%</div>
+            <div id="progressBar"><div id="progressFill" :style="{width: uploadProgress + '%'}"></div></div>
+          </div>
+          <div v-if="uploadStatus" class="upload-status">{{ uploadStatus }}</div>
         </div>
-      </div>
 
-      <div v-if="files.length">
-        <h2>📥 已上传文件（共 {{ files.length }} 个）</h2>
-        <form @submit.prevent="batchDownload">
-          <ul>
-            <li v-for="f in files" :key="f.name">
-              <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
-                <div style="display:flex; align-items:center; flex-grow:1;">
+        <div v-if="files.length">
+          <h2>📥 已上传文件（共 {{ files.length }} 个）</h2>
+          <form @submit.prevent="batchDownload">
+            <ul>
+              <li v-for="f in files" :key="f.name" class="file-item">
+                <div class="file-info">
                   <label style="display:flex; align-items:center; width:100%;">
                     <input type="checkbox" v-model="selectedFiles" :value="f.name" class="file-checkbox">
-                    <span style="flex-grow:1;">{{ f.name }}</span>
+                    <span class="file-name">{{ f.name }}</span>
+                    <span class="file-size">{{ f.size }}</span>
                   </label>
                 </div>
-                <span style="margin:0 15px; color:#666; white-space:nowrap;">{{ f.size }}</span>
-                <a :href="`/uploads/${encodeURIComponent(f.name)}`" target="_blank">下载</a>
-              </div>
-            </li>
-          </ul>
+                <div class="file-actions">
+                  <a :href="`/uploads/${encodeURIComponent(f.name)}`" target="_blank" class="download-link">下载</a>
+                  <button class="delete-btn" @click="deleteFile(f.name)">删除</button>
+                </div>
+              </li>
+            </ul>
 
-          <div class="batch-download">
-            <label><input type="checkbox" v-model="selectAll"> 全选</label>
-            <button type="submit" class="upload-btn" style="margin-left:10px; background:#e67e22;">
-              📦 批量下载（ZIP）
-            </button>
-          </div>
-        </form>
-      </div>
+            <div class="batch-download">
+              <label><input type="checkbox" v-model="selectAll"> 全选</label>
+              <button type="submit" class="upload-btn" style="margin-left:10px; background:#e67e22;">
+                📦 批量下载（ZIP）
+              </button>
+            </div>
+          </form>
+        </div>
       <p v-else style="text-align:center; color:#777;">暂无文件</p>
 
     </div>
@@ -86,20 +103,24 @@
         发送文本
       </button>
 
-      <div v-if="messages.length">
-        <h3 style="margin-top:30px;">已发送文本（共 {{ messages.length }} 条）</h3>
-        <ul style="list-style:none; padding:0; margin:0;">
-          <li v-for="(msg, i) in messages" :key="i" style="padding:15px; border-bottom:1px solid #eee; background:#f9f9f9; margin-bottom:8px; border-radius:6px; display:flex; flex-direction:column;">
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px;">
-              <div class="text-message-time">{{ msg.time }}</div>
-              <button class="copy-text-btn" @click="copyText(msg.content, $event)">复制</button>
-            </div>
-            <p class="text-message-content">{{ msg.content }}</p>
-          </li>
-        </ul>
+        <div v-if="messages.length">
+          <h3 style="margin-top:30px;">已发送文本（共 {{ messages.length }} 条）</h3>
+          <ul style="list-style:none; padding:0; margin:0;">
+            <li v-for="(msg, i) in messages" :key="i" class="message-item">
+              <div class="message-header">
+                <span class="text-message-time">{{ msg.time }}</span>
+                <div class="message-actions">
+                  <button class="copy-text-btn" @click="copyText(msg.content, $event)">复制</button>
+                  <button class="delete-text-btn" @click="deleteMessage(msg)">删除</button>
+                </div>
+              </div>
+              <p class="text-message-content">{{ msg.content }}</p>
+            </li>
+          </ul>
+        </div>
+        <p v-else style="text-align:center; color:#999; margin-top:20px;">暂无文本消息</p>
       </div>
-      <p v-else style="text-align:center; color:#999; margin-top:20px;">暂无文本消息</p>
-    </div>
+    </template>
   </div>
 
   <!-- 二维码区域 -->
